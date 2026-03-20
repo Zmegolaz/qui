@@ -263,13 +263,14 @@ func (s *Service) scanInstance(ctx context.Context, instanceID int, settings *mo
 
 	if client.SupportsTrackerHealth() {
 		// Cached torrents can lack tracker lists. Keep possible tracker matches
-		// and apply tracker rules to the fresh response below.
+		// and apply tracker rules and the initial wait, which an unregistered
+		// tracker message can skip, to the fresh response below.
 		prefilter := *settings
 		prefilter.Trackers = nil
 		prefilter.MonitorAll = settings.MonitorAll || (!settings.ExcludeTrackers && len(settings.Trackers) > 0)
 		var hashes []string
 		for _, torrent := range torrents {
-			if s.torrentMeetsCriteria(torrent, &prefilter) {
+			if s.torrentMatchesFilters(torrent, &prefilter) {
 				hashes = append(hashes, torrent.Hash)
 			}
 		}
@@ -647,9 +648,20 @@ func (s *Service) torrentMeetsCriteria(torrent qbt.Torrent, settings *models.Ins
 		return false
 	}
 	// Check initial wait - torrent must be old enough
-	age := s.currentTime().Unix() - torrent.AddedOn
-	if settings.InitialWaitSeconds > 0 && age < int64(settings.InitialWaitSeconds) {
-		return false
+	// Zmeg:
+	// Skip the wait if the torrent already has a known tracker error (e.g. pre-announced
+	// cross-seeds that complete instantly and will never accumulate TimeActive).
+	if settings.InitialWaitSeconds > 0 && torrent.TimeActive < int64(settings.InitialWaitSeconds) {
+		hasTrackerError := false
+		for _, tracker := range torrent.Trackers {
+			if qbittorrent.TrackerMessageMatchesUnregistered(tracker.Message) {
+				hasTrackerError = true
+				break
+			}
+		}
+		if !hasTrackerError {
+			return false
+		}
 	}
 	return true
 }

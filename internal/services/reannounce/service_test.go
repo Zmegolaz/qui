@@ -127,8 +127,22 @@ func TestTorrentMeetsCriteria_IncludeExcludeLogic(t *testing.T) {
 				MonitorAll:         true,
 				InitialWaitSeconds: 15,
 			},
-			torrent: qbt.Torrent{AddedOn: time.Now().Unix() - 10, State: qbt.TorrentStateStalledUp},
+			torrent: qbt.Torrent{TimeActive: 10, State: qbt.TorrentStateStalledUp},
 			want:    false,
+		},
+		{
+			name: "Initial Wait Skipped For Unregistered Tracker",
+			settings: models.InstanceReannounceSettings{
+				Enabled:            true,
+				MonitorAll:         true,
+				InitialWaitSeconds: 15,
+			},
+			torrent: qbt.Torrent{
+				TimeActive: 4,
+				State:      qbt.TorrentStateStalledUp,
+				Trackers:   []qbt.TorrentTracker{{Status: qbt.TrackerStatusNotWorking, Message: "unregistered torrent"}},
+			},
+			want: true,
 		},
 		{
 			name: "Initial Wait Met",
@@ -137,7 +151,7 @@ func TestTorrentMeetsCriteria_IncludeExcludeLogic(t *testing.T) {
 				MonitorAll:         true,
 				InitialWaitSeconds: 15,
 			},
-			torrent: qbt.Torrent{AddedOn: time.Now().Unix() - 20, State: qbt.TorrentStateStalledUp},
+			torrent: qbt.Torrent{TimeActive: 20, State: qbt.TorrentStateStalledUp},
 			want:    true,
 		},
 		{
@@ -541,9 +555,9 @@ func TestScanInstance_SkipsFetchWhenScopeCannotMatch(t *testing.T) {
 func TestScanInstance_FetchesOnlyCandidates(t *testing.T) {
 	now := time.Now()
 	torrents := map[string]qbt.Torrent{}
-	for _, hash := range []string{"eligible", "other", "old", "young", "category", "tag", "healthy", "active"} {
+	for _, hash := range []string{"eligible", "other", "old", "young", "unregistered", "category", "tag", "healthy", "active"} {
 		torrents[hash] = qbt.Torrent{
-			Hash: hash, Name: "Synthetic " + hash, AddedOn: now.Unix() - 60,
+			Hash: hash, Name: "Synthetic " + hash, AddedOn: now.Unix() - 60, TimeActive: 60,
 			State: qbt.TorrentStateStalledUp, Category: hash, Tags: hash,
 			Trackers: []qbt.TorrentTracker{{Url: "https://" + hash + ".test/announce", Status: qbt.TrackerStatusNotWorking}},
 		}
@@ -552,8 +566,14 @@ func TestScanInstance_FetchesOnlyCandidates(t *testing.T) {
 	old.AddedOn = now.Unix() - 601
 	torrents["old"] = old
 	young := torrents["young"]
-	young.AddedOn = now.Unix()
+	young.TimeActive = 0
 	torrents["young"] = young
+	// A cross-seed can stay at a few seconds of active time. Cached torrents
+	// have no tracker messages, so only the fresh fetch can skip its wait.
+	unregistered := torrents["unregistered"]
+	unregistered.TimeActive = 4
+	unregistered.Trackers[0].Message = "unregistered torrent"
+	torrents["unregistered"] = unregistered
 	healthy := torrents["healthy"]
 	healthy.Trackers[0].Status = qbt.TrackerStatusOK
 	torrents["healthy"] = healthy
@@ -573,8 +593,8 @@ func TestScanInstance_FetchesOnlyCandidates(t *testing.T) {
 				MonitorAll: true, ExcludeCategories: true, Categories: []string{"category"},
 				ExcludeTags: true, Tags: []string{"tag"},
 			},
-			wantHashes: []string{"eligible", "other", "healthy"},
-			wantJobs:   []string{"ELIGIBLE", "OTHER"},
+			wantHashes: []string{"eligible", "other", "young", "unregistered", "healthy"},
+			wantJobs:   []string{"ELIGIBLE", "OTHER", "UNREGISTERED"},
 		},
 		{
 			name:       "category or tag inclusion",
@@ -591,7 +611,7 @@ func TestScanInstance_FetchesOnlyCandidates(t *testing.T) {
 		{
 			name:       "tracker inclusion with empty cache lists",
 			settings:   models.InstanceReannounceSettings{Trackers: []string{"eligible.test"}},
-			wantHashes: []string{"eligible", "other", "category", "tag", "healthy"},
+			wantHashes: []string{"eligible", "other", "young", "unregistered", "category", "tag", "healthy"},
 			wantJobs:   []string{"ELIGIBLE"},
 		},
 		{
@@ -600,7 +620,7 @@ func TestScanInstance_FetchesOnlyCandidates(t *testing.T) {
 				Categories: []string{"category"}, Trackers: []string{"eligible.test", "tag.test"},
 				ExcludeTags: true, Tags: []string{"tag"},
 			},
-			wantHashes: []string{"eligible", "other", "category", "healthy"},
+			wantHashes: []string{"eligible", "other", "young", "unregistered", "category", "healthy"},
 			wantJobs:   []string{"ELIGIBLE", "CATEGORY"},
 		},
 		{
