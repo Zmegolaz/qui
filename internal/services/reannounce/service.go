@@ -552,12 +552,24 @@ func (s *Service) torrentMeetsCriteria(torrent qbt.Torrent, settings *models.Ins
 		return false
 	}
 	// Check initial wait - torrent must be old enough
-	age := s.currentTime().Unix() - torrent.AddedOn
-	if settings.InitialWaitSeconds > 0 && age < int64(settings.InitialWaitSeconds) {
-		return false
+	// Zmeg:
+	// Skip the wait if the torrent already has a known tracker error (e.g. pre-announced
+	// cross-seeds that complete instantly and will never accumulate TimeActive).
+	if settings.InitialWaitSeconds > 0 && torrent.TimeActive < int64(settings.InitialWaitSeconds) {
+		hasTrackerError := false
+		for _, tracker := range torrent.Trackers {
+			if qbittorrent.TrackerMessageMatchesUnregistered(tracker.Message) {
+				hasTrackerError = true
+				break
+			}
+		}
+		if !hasTrackerError {
+			return false
+		}
 	}
 	return true
 }
+
 
 // torrentMatchesFilters checks if a torrent matches the monitoring scope (state, age,
 // category/tag/tracker filters) WITHOUT checking the initial wait period. Used by
@@ -682,10 +694,6 @@ func (s *Service) torrentMatchesFilters(torrent qbt.Torrent, settings *models.In
 func (s *Service) hasHealthyTracker(trackers []qbt.TorrentTracker) bool {
 	for _, tracker := range trackers {
 		if tracker.Status == qbt.TrackerStatusDisabled {
-			continue
-		}
-		// Check message first to catch OK status with unregistered msg
-		if qbittorrent.TrackerMessageMatchesUnregistered(tracker.Message) {
 			continue
 		}
 		if tracker.Status == qbt.TrackerStatusOK {
