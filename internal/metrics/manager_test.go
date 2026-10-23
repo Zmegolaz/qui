@@ -88,7 +88,7 @@ func TestTorrentCollector_Describe(t *testing.T) {
 	// Test that collector properly describes all metrics
 	collector := collector.NewTorrentCollector(nil, nil, nil)
 
-	descChan := make(chan *prometheus.Desc, 20)
+	descChan := make(chan *prometheus.Desc, 32)
 	collector.Describe(descChan)
 	close(descChan)
 
@@ -98,7 +98,7 @@ func TestTorrentCollector_Describe(t *testing.T) {
 	}
 
 	// Should have all expected metrics descriptors
-	assert.Len(t, descs, 15, "Should have 15 metric descriptors")
+	assert.Len(t, descs, 24, "Should have 24 metric descriptors")
 }
 
 func TestTorrentCollector_CollectWithNilDependencies(t *testing.T) {
@@ -115,7 +115,7 @@ func TestTorrentCollector_CollectWithNilDependencies(t *testing.T) {
 
 func BenchmarkTorrentCollector_Describe(b *testing.B) {
 	collector := collector.NewTorrentCollector(nil, nil, nil)
-	descChan := make(chan *prometheus.Desc, 20)
+	descChan := make(chan *prometheus.Desc, 32)
 
 	for b.Loop() {
 		collector.Describe(descChan)
